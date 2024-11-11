@@ -34,54 +34,73 @@ def get_random_frame(cap, total_frames, exclude_frames):
         attempts += 1
     raise ValueError("Unable to retrieve a unique frame after multiple attempts.")
 
-def create_collage(frames, orientation='horizontal'):
+def create_collage(frames):
     """
-    Create a collage image by stacking the frames either horizontally or vertically,
+    Create a collage image by arranging frames in two columns,
     with frame numbers overlaid.
 
     Args:
         frames (list): List of frame images (numpy arrays).
-        orientation (str): 'horizontal' or 'vertical' stacking.
 
     Returns:
         numpy.ndarray: Collage image.
     """
-    # Resize frames to have the same dimension based on orientation
-    if orientation == 'horizontal':
-        heights = [frame.shape[0] for frame in frames]
-        min_height = min(heights)
-        resized_frames = [
-            cv2.resize(frame, (int(frame.shape[1] * min_height / frame.shape[0]), min_height))
-            for frame in frames
-        ]
-    else:  # vertical
-        widths = [frame.shape[1] for frame in frames]
-        min_width = min(widths)
-        resized_frames = [
-            cv2.resize(frame, (min_width, int(frame.shape[0] * min_width / frame.shape[1])))
-            for frame in frames
-        ]
+    num_frames = len(frames)
+    num_rows = (num_frames + 1) // 2  # Number of rows needed
+
+    # Resize frames to have the same width
+    widths = [frame.shape[1] for frame in frames]
+    min_width = min(widths)
+    resized_frames = [
+        cv2.resize(frame, (min_width, int(frame.shape[0] * min_width / frame.shape[1])))
+        for frame in frames
+    ]
 
     # Overlay frame numbers
     for idx, frame in enumerate(resized_frames):
         cv2.putText(
-            frame, f"{idx+1}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
+            frame, f"{idx+1}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
             1, (0, 255, 0), 2, cv2.LINE_AA
         )
-    
-    # Stack frames based on orientation
-    if orientation == 'horizontal':
-        collage = np.hstack(resized_frames)
+
+    # Split frames into two columns
+    left_column_frames = []
+    right_column_frames = []
+
+    for idx, frame in enumerate(resized_frames):
+        if idx % 2 == 0:
+            left_column_frames.append(frame)
+        else:
+            right_column_frames.append(frame)
+
+    # Stack frames in each column vertically
+    left_column = cv2.vconcat(left_column_frames)
+    right_column = cv2.vconcat(right_column_frames) if right_column_frames else None
+
+    # Make sure both columns have the same height
+    if right_column is not None:
+        if left_column.shape[0] > right_column.shape[0]:
+            # Pad right_column at the bottom
+            padding = left_column.shape[0] - right_column.shape[0]
+            right_column = cv2.copyMakeBorder(right_column, 0, padding, 0, 0, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+        elif left_column.shape[0] < right_column.shape[0]:
+            # Pad left_column at the bottom
+            padding = right_column.shape[0] - left_column.shape[0]
+            left_column = cv2.copyMakeBorder(left_column, 0, padding, 0, 0, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+
+    # Stack the two columns horizontally
+    if right_column is not None:
+        collage = cv2.hconcat([left_column, right_column])
     else:
-        collage = np.vstack(resized_frames)
-    
+        collage = left_column
+
     # Add information about current settings
-    info_text = f"Frames: {len(frames)} | Orientation: {orientation.capitalize()}"
+    info_text = f"Frames: {len(frames)} | Layout: {num_rows}x2"
     cv2.putText(
-        collage, info_text, (10, collage.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 
+        collage, info_text, (10, collage.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX,
         0.7, (255, 255, 255), 2, cv2.LINE_AA
     )
-    
+
     return collage
 
 def resize_image_for_display(image, max_width=800, max_height=600):
@@ -200,7 +219,7 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
         return True  # Continue processing
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    if total_frames < 3:
+    if total_frames < 4:
         print(f"Error: Video {video_path} does not have enough frames. Skipping.")
         cap.release()
         return True  # Continue processing
@@ -210,14 +229,13 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
     frames = []
 
     # Initial settings
-    min_frames = 3
-    max_frames = 6
-    current_frames = 3
-    orientation = 'horizontal'
+    min_frames = 4
+    max_frames = 8
+    current_frames = 4
     swap_mode = False
     swap_first_frame = None
 
-    # Get initial three random different frames
+    # Get initial random different frames
     while len(frame_numbers) < current_frames:
         try:
             frame_num, frame = get_random_frame(cap, total_frames, frame_numbers)
@@ -233,7 +251,7 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
         return True  # Continue processing
 
     # Create initial collage
-    collage = create_collage(frames, orientation)
+    collage = create_collage(frames)
     collage_filename = "collage_temp.jpg"
     cv2.imwrite(collage_filename, collage)
 
@@ -241,14 +259,13 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
     display_collage = resize_image_for_display(collage, max_width=800, max_height=600)
 
     # Display collage using OpenCV
-    window_title = f"Collage for {video_path.name} - Press '+/-' to change frames, 'V' to toggle orientation, 'S' to swap frames, '1'-'6' to replace frames, '0' to confirm"
+    window_title = f"Collage for {video_path.name} - Press '+/-' to change frames, 'S' to swap frames, '1'-'{current_frames}' to replace frames, '0' to confirm"
     cv2.imshow(window_title, display_collage)
 
     print("Please check the collage window.")
-    print("Press '+' to increase frames, '-' to decrease frames.")
-    print("Press 'V' to toggle orientation (horizontal/vertical).")
+    print("Press '+' to increase frames by 2, '-' to decrease frames by 2.")
     print("Press 'S' to swap two frames.")
-    print("Press '1'-'6' to replace specific frames if available.")
+    print(f"Press '1'-'{current_frames}' to replace specific frames if available.")
     print("Press '0' to confirm and save the final image.")
 
     while True:
@@ -276,7 +293,7 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
                         frame_numbers[swap_first_frame], frame_numbers[swap_second_frame] = frame_numbers[swap_second_frame], frame_numbers[swap_first_frame]
                         print(f"Swapped Frame {swap_first_frame + 1} with Frame {swap_second_frame + 1}.")
                         # Update collage
-                        collage = create_collage(frames, orientation)
+                        collage = create_collage(frames)
                         cv2.imwrite(collage_filename, collage)
                         display_collage = resize_image_for_display(collage, max_width=800, max_height=600)
                         cv2.imshow(window_title, display_collage)
@@ -284,56 +301,51 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
                         swap_mode = False
                         swap_first_frame = None
                 else:
-                    print("Invalid key pressed for swapping. Please press '1'-'6'.")
+                    print(f"Invalid key pressed for swapping. Please press '1'-'{current_frames}'.")
                 continue  # Continue to next iteration
 
             if key == ord('0'):
                 break  # Confirm and save
             elif key in [ord('+'), ord('=')]:
-                if current_frames < max_frames:
-                    try:
-                        new_frame_num, new_frame = get_random_frame(cap, total_frames, frame_numbers)
-                        frame_numbers.append(new_frame_num)
-                        frames.append(new_frame)
-                        current_frames += 1
-                        print(f"Increased frame count to {current_frames}.")
-                        # Update collage
-                        collage = create_collage(frames, orientation)
-                        cv2.imwrite(collage_filename, collage)
-                        display_collage = resize_image_for_display(collage, max_width=800, max_height=600)
-                        cv2.imshow(window_title, display_collage)
-                    except ValueError as ve:
-                        print(f"Error: {ve}")
+                if current_frames + 2 <= max_frames:
+                    # Add two frames
+                    for _ in range(2):
+                        try:
+                            new_frame_num, new_frame = get_random_frame(cap, total_frames, frame_numbers)
+                            frame_numbers.append(new_frame_num)
+                            frames.append(new_frame)
+                        except ValueError as ve:
+                            print(f"Error: {ve}")
+                            break
+                    current_frames += 2
+                    print(f"Increased frame count to {current_frames}.")
+                    # Update collage
+                    collage = create_collage(frames)
+                    cv2.imwrite(collage_filename, collage)
+                    display_collage = resize_image_for_display(collage, max_width=800, max_height=600)
+                    cv2.imshow(window_title, display_collage)
                 else:
                     print(f"Maximum frame count ({max_frames}) reached.")
             elif key in [ord('-'), ord('_')]:
-                if current_frames > min_frames:
-                    # Remove the last frame
-                    removed_frame_num = frame_numbers.pop()
-                    removed_frame = frames.pop()
-                    current_frames -= 1
+                if current_frames - 2 >= min_frames:
+                    # Remove the last two frames
+                    for _ in range(2):
+                        frame_numbers.pop()
+                        frames.pop()
+                    current_frames -= 2
                     print(f"Decreased frame count to {current_frames}.")
                     # Update collage
-                    collage = create_collage(frames, orientation)
+                    collage = create_collage(frames)
                     cv2.imwrite(collage_filename, collage)
                     display_collage = resize_image_for_display(collage, max_width=800, max_height=600)
                     cv2.imshow(window_title, display_collage)
                 else:
                     print(f"Minimum frame count ({min_frames}) reached.")
-            elif key in [ord('V'), ord('v')]:
-                # Toggle orientation
-                orientation = 'vertical' if orientation == 'horizontal' else 'horizontal'
-                print(f"Toggled orientation to {orientation}.")
-                # Update collage
-                collage = create_collage(frames, orientation)
-                cv2.imwrite(collage_filename, collage)
-                display_collage = resize_image_for_display(collage, max_width=800, max_height=600)
-                cv2.imshow(window_title, display_collage)
             elif key in [ord('S'), ord('s')]:
                 if current_frames >= 2:
                     swap_mode = True
                     swap_first_frame = None
-                    print("Swap mode activated. Please press two frame numbers (1-6) to swap.")
+                    print("Swap mode activated. Please press two frame numbers to swap.")
                 else:
                     print("Not enough frames to perform a swap. Need at least 2 frames.")
             elif key in [ord(str(n)) for n in range(1, current_frames +1)]:
@@ -347,7 +359,7 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
                     frame_numbers[frame_to_replace] = new_frame_num
                     frames[frame_to_replace] = new_frame
                     # Update collage
-                    collage = create_collage(frames, orientation)
+                    collage = create_collage(frames)
                     cv2.imwrite(collage_filename, collage)
                     # Resize collage for display
                     display_collage = resize_image_for_display(collage, max_width=800, max_height=600)
@@ -356,7 +368,7 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
                 except ValueError as ve:
                     print(f"Error: {ve}")
             else:
-                print("Invalid key pressed. Please use '+', '-', 'V', 'S', '1'-'6', or '0'.")
+                print(f"Invalid key pressed. Please use '+', '-', 'S', '1'-'{current_frames}', or '0'.")
 
     # Determine the relative path of the video with respect to the input folder
     try:
