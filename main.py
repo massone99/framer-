@@ -3,6 +3,7 @@ import numpy as np
 import random
 import os
 import json
+import shutil  # Added for file copying
 from tkinter import Tk, messagebox
 from tkinter import filedialog
 from pathlib import Path
@@ -207,6 +208,25 @@ def save_processed_video(json_path, video_path):
     except Exception as e:
         print(f"Error saving processed video to {json_path}: {e}")
 
+def find_existing_image(output_folder, image_name, image_extensions):
+    """
+    Search recursively in the output folder for an image with the specified name.
+
+    Args:
+        output_folder (Path): Path object of the output folder.
+        image_name (str): Name of the image file without extension.
+        image_extensions (set): Set of supported image file extensions.
+
+    Returns:
+        Path or None: Path to the existing image if found, None otherwise.
+    """
+    for root, dirs, files in os.walk(output_folder):
+        for file in files:
+            file_path = Path(root) / file
+            if file_path.suffix.lower() in image_extensions and file_path.stem == image_name:
+                return file_path
+    return None
+
 def process_video(video_path, input_folder, output_folder, json_path, video_index, total_videos):
     """
     Process a single video to create a collage.
@@ -225,6 +245,37 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
     processed_videos = load_processed_videos(json_path)
     if str(video_path.resolve()) in processed_videos:
         print(f"\nSkipping already processed video {video_index + 1}/{total_videos}: {video_path}")
+        return True  # Continue processing
+
+    # Determine the relative path of the video with respect to the input folder
+    try:
+        relative_path = video_path.relative_to(input_folder)
+    except ValueError:
+        # If video_path is not under input_folder, use the absolute path
+        relative_path = video_path.name
+
+    # Define the path for the collage image in the output folder
+    collage_output_path = output_folder / relative_path.parent / (video_path.stem + '.jpg')
+
+    # Ensure the output directory exists
+    collage_output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Check if an image with the same name exists in output_folder recursively
+    image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff'}
+    existing_image_path = find_existing_image(output_folder, video_path.stem, image_extensions)
+
+    if existing_image_path is not None:
+        if existing_image_path != collage_output_path:
+            # Copy the image to the collage_output_path
+            try:
+                shutil.copy2(existing_image_path, collage_output_path)
+                print(f"Copied existing image from {existing_image_path} to {collage_output_path}")
+            except Exception as e:
+                print(f"Error copying existing image: {e}")
+        else:
+            print(f"Image already exists at {collage_output_path}")
+        # Mark the video as processed
+        save_processed_video(json_path, video_path)
         return True  # Continue processing
 
     print(f"\nProcessing video {video_index + 1}/{total_videos}: {video_path}")
@@ -458,19 +509,6 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
                 # The actual replacement will happen in the replace_mode
             else:
                 print(f"Invalid key pressed. Please use '+', '-', 'S', '1'-'{current_frames}', or '0'.")
-
-    # Determine the relative path of the video with respect to the input folder
-    try:
-        relative_path = video_path.relative_to(input_folder)
-    except ValueError:
-        # If video_path is not under input_folder, use the absolute path
-        relative_path = video_path.name
-
-    # Define the path for the collage image in the output folder
-    collage_output_path = output_folder / relative_path.parent / (video_path.stem + '.jpg')
-    
-    # Ensure the output directory exists
-    collage_output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Save final image
     try:
