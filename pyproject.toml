@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "collage-from-video"
+version = "0.1.0"
+description = ""
+authors = ["massone99 <lorenzo.studio@studio.unibo.it>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+opencv-python = "^4.10.0.84"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+collage_from_video = "collage_from_video.__main__:main"
