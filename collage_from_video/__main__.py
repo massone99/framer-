@@ -52,21 +52,19 @@ def get_random_frame(cap, total_frames, exclude_frames):
 
 def create_collage(frames):
     """
-    Create a collage image by arranging frames in two columns,
-    with frame numbers overlaid.
+    Create a collage image by arranging frames, with special handling for odd number of frames.
 
     Args:
-        frames (list): List of frame images (numpy arrays).
+        frames (list): List of frame images (numpy.ndarray).
 
     Returns:
-        numpy.ndarray: Collage image.
+        numpy.ndarray: The collage image.
     """
     num_frames = len(frames)
-    num_rows = (num_frames + 1) // 2  # Number of rows needed
 
     # Resize frames to have the same width
     widths = [frame.shape[1] for frame in frames]
-    max_width = max(widths)  # Changed to max_width for better quality
+    max_width = max(widths)
     resized_frames = [
         cv2.resize(frame, (max_width, int(frame.shape[0] * max_width / frame.shape[1])))
         for frame in frames
@@ -79,44 +77,93 @@ def create_collage(frames):
             1, (0, 255, 0), 2, cv2.LINE_AA
         )
 
-    # For 2 frames, arrange them side by side without vertical stacking
     if num_frames == 2:
+        # For 2 frames, arrange them side by side
         collage = cv2.hconcat(resized_frames)
+    elif num_frames == 3:
+        # For 3 frames, put one on top and two below
+        bottom_row = cv2.hconcat([resized_frames[1], resized_frames[2]])
+
+        # Resize the top frame to match the width of the bottom row
+        top_frame = cv2.resize(resized_frames[0],
+                             (bottom_row.shape[1],
+                              int(resized_frames[0].shape[0] * bottom_row.shape[1] / resized_frames[0].shape[1])))
+
+        collage = cv2.vconcat([top_frame, bottom_row])
     else:
-        # Split frames into two columns
-        left_column_frames = []
-        right_column_frames = []
+        if num_frames % 2 == 1:
+            # If odd number of frames, make the first frame bigger
+            first_frame = resized_frames[0]
+            other_frames = resized_frames[1:]
 
-        for idx, frame in enumerate(resized_frames):
-            if idx % 2 == 0:
-                left_column_frames.append(frame)
+            # Calculate number of frames in each column
+            num_other = len(other_frames)
+            half = num_other // 2
+
+            left_column_frames = other_frames[:half]
+            right_column_frames = other_frames[half:]
+
+            # Concatenate left and right columns
+            left_column = cv2.vconcat(left_column_frames) if left_column_frames else None
+            right_column = cv2.vconcat(right_column_frames) if right_column_frames else None
+
+            # Determine the width for the smaller columns
+            smaller_width = min(
+                left_column.shape[1] if left_column is not None else max_width,
+                right_column.shape[1] if right_column is not None else max_width
+            )
+
+            # Resize columns to have the same width
+            if left_column is not None:
+                left_column = cv2.resize(left_column, (smaller_width, left_column.shape[0]))
+            if right_column is not None:
+                right_column = cv2.resize(right_column, (smaller_width, right_column.shape[0]))
+
+            # Concatenate left and right columns horizontally
+            if left_column is not None and right_column is not None:
+                bottom_row = cv2.hconcat([left_column, right_column])
+            elif left_column is not None:
+                bottom_row = left_column
             else:
-                right_column_frames.append(frame)
+                bottom_row = right_column
 
-        # Stack frames in each column vertically
-        left_column = cv2.vconcat(left_column_frames)
-        right_column = cv2.vconcat(right_column_frames) if right_column_frames else None
+            # Resize the first frame to match the width of the bottom row
+            top_frame = cv2.resize(first_frame, (bottom_row.shape[1], int(first_frame.shape[0] * bottom_row.shape[1] / first_frame.shape[1])))
 
-        # Make sure both columns have the same height
-        if right_column is not None:
-            if left_column.shape[0] > right_column.shape[0]:
-                # Pad right_column at the bottom
-                padding = left_column.shape[0] - right_column.shape[0]
-                right_column = cv2.copyMakeBorder(right_column, 0, padding, 0, 0, cv2.BORDER_CONSTANT, value=[0, 0, 0])
-            elif left_column.shape[0] < right_column.shape[0]:
-                # Pad left_column at the bottom
-                padding = right_column.shape[0] - left_column.shape[0]
-                left_column = cv2.copyMakeBorder(left_column, 0, padding, 0, 0, cv2.BORDER_CONSTANT, value=[0, 0, 0])
-
-        # Stack the two columns horizontally
-        if right_column is not None:
-            collage = cv2.hconcat([left_column, right_column])
+            # Concatenate top frame and bottom rows vertically
+            collage = cv2.vconcat([top_frame, bottom_row])
         else:
-            collage = left_column
+            # Original logic for even number of frames
+            num_rows = (num_frames + 1) // 2
+            left_column_frames = []
+            right_column_frames = []
+
+            for idx, frame in enumerate(resized_frames):
+                if idx % 2 == 0:
+                    left_column_frames.append(frame)
+                else:
+                    right_column_frames.append(frame)
+
+            left_column = cv2.vconcat(left_column_frames)
+            right_column = cv2.vconcat(right_column_frames) if right_column_frames else None
+
+            if right_column is not None:
+                if left_column.shape[0] > right_column.shape[0]:
+                    padding = left_column.shape[0] - right_column.shape[0]
+                    right_column = cv2.copyMakeBorder(right_column, 0, padding, 0, 0,
+                                                    cv2.BORDER_CONSTANT, value=[0, 0, 0])
+                elif left_column.shape[0] < right_column.shape[0]:
+                    padding = right_column.shape[0] - left_column.shape[0]
+                    left_column = cv2.copyMakeBorder(left_column, 0, padding, 0, 0,
+                                                   cv2.BORDER_CONSTANT, value=[0, 0, 0])
+
+                collage = cv2.hconcat([left_column, right_column])
+            else:
+                collage = left_column
 
     # Add information about current settings
-    num_cols = min(2, num_frames)  # For 2 frames, we always use 2 columns
-    info_text = f"Frames: {len(frames)} | Layout: {num_rows}x{num_cols}"
+    num_cols = 2 if num_frames >= 2 else 1
+    info_text = f"Frames: {len(frames)} | Layout: {num_frames}-frame"
     cv2.putText(
         collage, info_text, (10, collage.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX,
         0.7, (255, 255, 255), 2, cv2.LINE_AA
@@ -231,6 +278,12 @@ def find_existing_image(output_folder, image_name, image_extensions):
                 return file_path
     return None
 
+import os
+import shutil
+import sys
+from pathlib import Path
+import cv2
+
 def process_video(video_path, input_folder, output_folder, json_path, video_index, total_videos):
     """
     Process a single video to create a collage.
@@ -246,16 +299,22 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
     Returns:
         bool: True to continue processing, False to exit the program.
     """
+    # Load processed videos (full paths)
     processed_videos = load_processed_videos(json_path)
-    if str(video_path.resolve()) in processed_videos:
-        print(f"\nSkipping already processed video {video_index + 1}/{total_videos}: {video_path}")
+
+    # Map all processed video paths to their filenames
+    processed_videos_filenames = {Path(p).name for p in processed_videos}
+
+    # Check if the current video's filename is in the processed set
+    if video_path.name in processed_videos_filenames:
+        print(f"\nSkipping already processed video {video_index + 1}/{total_videos}: {video_path.name}")
         return True  # Continue processing
 
     # Determine the relative path of the video with respect to the input folder
     try:
         relative_path = video_path.relative_to(input_folder)
     except ValueError:
-        # If video_path is not under input_folder, use the absolute path
+        # If video_path is not under input_folder, use the filename
         relative_path = video_path.name
 
     # Define the path for the collage image in the output folder
@@ -278,11 +337,11 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
                 print(f"Error copying existing image: {e}")
         else:
             print(f"Image already exists at {collage_output_path}")
-        # Mark the video as processed
+        # Mark the video as processed using its full path
         save_processed_video(json_path, video_path)
         return True  # Continue processing
 
-    print(f"\nProcessing video {video_index + 1}/{total_videos}: {video_path}")
+    print(f"\nProcessing video {video_index + 1}/{total_videos}: {video_path.name}")
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -309,6 +368,7 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
     copy_source_frame = None
     replace_mode = False
     frame_to_replace = None
+    skip_video = False  # Flag to determine if the video should be skipped
 
     # Get initial random different frames
     while len(frame_numbers) < current_frames:
@@ -321,7 +381,7 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
             break
 
     if len(frames) < min_frames:
-        print(f"Error: Unable to retrieve the minimum required frames for {video_path}. Skipping.")
+        print(f"Error: Unable to retrieve the minimum required frames for {video_path.name}. Skipping.")
         cap.release()
         return True  # Continue processing
 
@@ -340,13 +400,11 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
     cv2.imshow(window_title, display_collage)
 
     print("Please check the collage window.")
-    print("Press '+' to increase frames by 2, '-' to decrease frames by 2.")
+    print("Press '+' to increase frames by 1, '-' to decrease frames by 1.")
     print("Press 'S' to swap two frames.")
     print("Press 'C' to copy one frame to another.")
     print(f"Press '1'-'{current_frames}' to replace specific frames.")
-    print("While replacing, use Left/Right arrows to select adjacent frames.")
-    print("Use 'A'/'D' to jump frames by 10.")
-    print("Use 'W'/'Q' to jump frames by 100.")
+    print("Press 'X' to skip this video.")
     print("Press '0' to confirm and save the final image.")
 
     while True:
@@ -365,7 +423,7 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
                     selected_frame = int(chr(key)) - 1  # Convert key to index (0-based)
                     if swap_first_frame is None:
                         swap_first_frame = selected_frame
-                        print(f"Selected first frame to swap: Frame {selected_frame + 1}")
+                        print(f"Selected first frame to swap: Frame {swap_first_frame + 1}")
                     else:
                         swap_second_frame = selected_frame
                         print(f"Selected second frame to swap: Frame {swap_second_frame + 1}")
@@ -488,6 +546,32 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
                         cv2.imshow(window_title, display_collage)
                     else:
                         print("Already at the first frame.")
+                elif key in [ord('E'), ord('e')]:
+                    # Increase frame number by 1000
+                    if frame_numbers[frame_to_replace] < total_frames - 1:
+                        frame_numbers[frame_to_replace] = min(frame_numbers[frame_to_replace] + 1000, total_frames - 1)
+                        frames[frame_to_replace] = get_frame_by_number(cap, frame_numbers[frame_to_replace])
+                        print(f"Jumped forward 1000 frames to frame number {frame_numbers[frame_to_replace]}")
+                        # Update collage
+                        collage = create_collage(frames)
+                        cv2.imwrite(collage_filename, collage)
+                        display_collage = resize_image_for_display(collage, max_width=1280, max_height=720)
+                        cv2.imshow(window_title, display_collage)
+                    else:
+                        print("Already at the last frame.")
+                elif key in [ord('Z'), ord('z')]:
+                    # Decrease frame number by 1000
+                    if frame_numbers[frame_to_replace] > 0:
+                        frame_numbers[frame_to_replace] = max(frame_numbers[frame_to_replace] - 1000, 0)
+                        frames[frame_to_replace] = get_frame_by_number(cap, frame_numbers[frame_to_replace])
+                        print(f"Jumped backward 1000 frames to frame number {frame_numbers[frame_to_replace]}")
+                        # Update collage
+                        collage = create_collage(frames)
+                        cv2.imwrite(collage_filename, collage)
+                        display_collage = resize_image_for_display(collage, max_width=1280, max_height=720)
+                        cv2.imshow(window_title, display_collage)
+                    else:
+                        print("Already at the first frame.")
                 elif key in [ord('R'), ord('r')]:
                     # Replace with a random frame
                     frame_numbers_set = set(frame_numbers)
@@ -510,46 +594,43 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
                     frame_to_replace = None
                     print("Replacement confirmed.")
                 else:
-                    print("Invalid key in replace mode. Use Left/Right arrows, 'A'/'D', 'W'/'Q', 'R', or 'Enter'.")
+                    print("Invalid key in replace mode. Use Left/Right arrows, 'A'/'D', 'W'/'Q', 'Z'/'E', 'R', or 'Enter'.")
                 continue  # Skip the rest of the loop
+
+            # Check for skip key ('X' or 'x')
+            if key in [ord('X'), ord('x')]:
+                print("Skip requested. Skipping this video.")
+                skip_video = True
+                break  # Exit the key handling loop to skip the video
 
             if key == ord('0'):
                 break  # Confirm and save
             elif key in [ord('+'), ord('=')]:
-                if current_frames + 2 <= max_frames:
-                    # Add two frames
-                    for _ in range(2):
-                        try:
-                            new_frame_num, new_frame = get_random_frame(cap, total_frames, frame_numbers)
-                            frame_numbers.append(new_frame_num)
-                            frames.append(new_frame)
-                        except ValueError as ve:
-                            print(f"Error: {ve}")
-                            break
-                    current_frames += 2
+                if current_frames + 1 <= max_frames:
+                    try:
+                        new_frame_num, new_frame = get_random_frame(cap, total_frames, frame_numbers)
+                        frame_numbers.append(new_frame_num)
+                        frames.append(new_frame)
+                    except ValueError as ve:
+                        print(f"Error: {ve}")
+                    current_frames += 1
                     print(f"Increased frame count to {current_frames}.")
-                    # Update collage
                     collage = create_collage(frames)
                     cv2.imwrite(collage_filename, collage)
                     display_collage = resize_image_for_display(collage, max_width=1280, max_height=720)
-                    # Update instructions for the new frame count
                     print(f"Press '1'-'{current_frames}' to replace specific frames.")
                     cv2.imshow(window_title, display_collage)
                 else:
                     print(f"Maximum frame count ({max_frames}) reached.")
             elif key in [ord('-'), ord('_')]:
-                if current_frames - 2 >= min_frames:
-                    # Remove the last two frames
-                    for _ in range(2):
-                        frame_numbers.pop()
-                        frames.pop()
-                    current_frames -= 2
+                if current_frames - 1 >= min_frames:
+                    frame_numbers.pop()
+                    frames.pop()
+                    current_frames -= 1
                     print(f"Decreased frame count to {current_frames}.")
-                    # Update collage
                     collage = create_collage(frames)
                     cv2.imwrite(collage_filename, collage)
                     display_collage = resize_image_for_display(collage, max_width=1280, max_height=720)
-                    # Update instructions for the new frame count
                     print(f"Press '1'-'{current_frames}' to replace specific frames.")
                     cv2.imshow(window_title, display_collage)
                 else:
@@ -572,31 +653,44 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
                 frame_to_replace = int(chr(key)) - 1  # Convert key to index (0-based)
                 print(f"Replacing frame {frame_to_replace + 1}...")
                 replace_mode = True
-                print("Use Left/Right arrows to select adjacent frames, 'A'/'D' to jump frames by 10, 'W'/'Q' to jump frames by 100, 'R' for random frame, 'Enter' to confirm.")
+                print("Use Left/Right arrows to select adjacent frames, 'A'/'D' to jump frames by 10, 'W'/'Q' to jump frames by 100, 'Z'/'E' to jump frames by 1000, 'R' for random frame, 'Enter' to confirm.")
                 # The actual replacement will happen in the replace_mode
             else:
-                print(f"Invalid key pressed. Please use '+', '-', 'S', 'C', '1'-'{current_frames}', or '0'.")
+                print(f"Invalid key pressed. Please use '+', '-', 'S', 'C', '1'-'{current_frames}', 'X', or '0'.")
 
-    # Save final image
-    try:
-        cv2.imwrite(str(collage_output_path), collage)
-        print(f"Final image saved as {collage_output_path}")
-    except Exception as e:
-        print(f"Error saving final image for {video_path}: {e}")
+    # After exiting the key handling loop
+    if not skip_video:
+        # Save final image
+        try:
+            cv2.imwrite(str(collage_output_path), collage)
+            print(f"Final image saved as {collage_output_path}")
+        except Exception as e:
+            print(f"Error saving final image for {video_path.name}: {e}")
 
-    # Delete the temporary collage image
-    try:
-        os.remove(collage_filename)
-        print(f"Temporary collage image '{collage_filename}' has been deleted.")
-    except Exception as e:
-        print(f"Could not delete temporary collage image '{collage_filename}'. Please delete it manually.")
-        print(f"Error: {e}")
+        # Delete the temporary collage image
+        try:
+            os.remove(collage_filename)
+            print(f"Temporary collage image '{collage_filename}' has been deleted.")
+        except Exception as e:
+            print(f"Could not delete temporary collage image '{collage_filename}'. Please delete it manually.")
+            print(f"Error: {e}")
 
-    cap.release()
-    cv2.destroyWindow(window_title)
+        cap.release()
+        cv2.destroyWindow(window_title)
 
-    # Add video to processed list
-    save_processed_video(json_path, video_path)
+        # Add video to processed list (saving full path as before)
+        save_processed_video(json_path, video_path)
+    else:
+        # If skipping, perform cleanup without saving
+        try:
+            os.remove(collage_filename)
+            print(f"Temporary collage image '{collage_filename}' has been deleted.")
+        except Exception as e:
+            print(f"Could not delete temporary collage image '{collage_filename}'. Please delete it manually.")
+            print(f"Error: {e}")
+
+        cap.release()
+        cv2.destroyWindow(window_title)
 
     return True  # Continue processing
 
