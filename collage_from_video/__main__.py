@@ -1,288 +1,24 @@
+# main.py
+
+from collage_from_video.utils.collage_utils import create_collage, resize_image_for_display
+from collage_from_video.utils.frame_utils import get_frame_by_number
+from collage_from_video.utils.frame_utils import get_random_frame
+from collage_from_video.utils.file_utils import copy_existing_image, find_existing_image, get_all_video_files, load_processed_videos, save_processed_video
 import cv2
-import numpy as np
-import random
-import os
-import json
-import shutil  # Added for file copying
-from tkinter import Tk, messagebox
-from tkinter import filedialog
-from pathlib import Path
 import sys
-
-def get_frame_by_number(cap, frame_number):
-    """
-    Retrieve a specific frame from the video by frame number.
-
-    Args:
-        cap (cv2.VideoCapture): OpenCV VideoCapture object.
-        frame_number (int): Frame number to retrieve.
-
-    Returns:
-        numpy.ndarray: The frame image.
-    """
-    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-    success, frame = cap.read()
-    if success:
-        return frame
-    else:
-        raise ValueError(f"Unable to retrieve frame number {frame_number}.")
-
-def get_random_frame(cap, total_frames, exclude_frames):
-    """
-    Retrieve a random frame from the video, excluding specified frames.
-
-    Args:
-        cap (cv2.VideoCapture): OpenCV VideoCapture object.
-        total_frames (int): Total number of frames in the video.
-        exclude_frames (list): List of frame numbers to exclude.
-
-    Returns:
-        tuple: (frame_number, frame_image)
-    """
-    attempts = 0
-    max_attempts = 100
-    while attempts < max_attempts:
-        frame_number = random.randint(0, total_frames - 1)
-        if frame_number in exclude_frames:
-            attempts += 1
-            continue
-        frame = get_frame_by_number(cap, frame_number)
-        return frame_number, frame
-    raise ValueError("Unable to retrieve a unique frame after multiple attempts.")
-
-def create_collage(frames):
-    """
-    Create a collage image by arranging frames, with special handling for odd number of frames.
-
-    Args:
-        frames (list): List of frame images (numpy.ndarray).
-
-    Returns:
-        numpy.ndarray: The collage image.
-    """
-    num_frames = len(frames)
-
-    # Resize frames to have the same width
-    widths = [frame.shape[1] for frame in frames]
-    max_width = max(widths)
-    resized_frames = [
-        cv2.resize(frame, (max_width, int(frame.shape[0] * max_width / frame.shape[1])))
-        for frame in frames
-    ]
-
-    # Overlay frame numbers
-    for idx, frame in enumerate(resized_frames):
-        cv2.putText(
-            frame, f"{idx+1}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-            1, (0, 255, 0), 2, cv2.LINE_AA
-        )
-
-    if num_frames == 2:
-        # For 2 frames, arrange them side by side
-        collage = cv2.hconcat(resized_frames)
-    elif num_frames == 3:
-        # For 3 frames, put one on top and two below
-        bottom_row = cv2.hconcat([resized_frames[1], resized_frames[2]])
-
-        # Resize the top frame to match the width of the bottom row
-        top_frame = cv2.resize(resized_frames[0],
-                             (bottom_row.shape[1],
-                              int(resized_frames[0].shape[0] * bottom_row.shape[1] / resized_frames[0].shape[1])))
-
-        collage = cv2.vconcat([top_frame, bottom_row])
-    else:
-        if num_frames % 2 == 1:
-            # If odd number of frames, make the first frame bigger
-            first_frame = resized_frames[0]
-            other_frames = resized_frames[1:]
-
-            # Calculate number of frames in each column
-            num_other = len(other_frames)
-            half = num_other // 2
-
-            left_column_frames = other_frames[:half]
-            right_column_frames = other_frames[half:]
-
-            # Concatenate left and right columns
-            left_column = cv2.vconcat(left_column_frames) if left_column_frames else None
-            right_column = cv2.vconcat(right_column_frames) if right_column_frames else None
-
-            # Determine the width for the smaller columns
-            smaller_width = min(
-                left_column.shape[1] if left_column is not None else max_width,
-                right_column.shape[1] if right_column is not None else max_width
-            )
-
-            # Resize columns to have the same width
-            if left_column is not None:
-                left_column = cv2.resize(left_column, (smaller_width, left_column.shape[0]))
-            if right_column is not None:
-                right_column = cv2.resize(right_column, (smaller_width, right_column.shape[0]))
-
-            # Concatenate left and right columns horizontally
-            if left_column is not None and right_column is not None:
-                bottom_row = cv2.hconcat([left_column, right_column])
-            elif left_column is not None:
-                bottom_row = left_column
-            else:
-                bottom_row = right_column
-
-            # Resize the first frame to match the width of the bottom row
-            top_frame = cv2.resize(first_frame, (bottom_row.shape[1], int(first_frame.shape[0] * bottom_row.shape[1] / first_frame.shape[1])))
-
-            # Concatenate top frame and bottom rows vertically
-            collage = cv2.vconcat([top_frame, bottom_row])
-        else:
-            # Original logic for even number of frames
-            num_rows = (num_frames + 1) // 2
-            left_column_frames = []
-            right_column_frames = []
-
-            for idx, frame in enumerate(resized_frames):
-                if idx % 2 == 0:
-                    left_column_frames.append(frame)
-                else:
-                    right_column_frames.append(frame)
-
-            left_column = cv2.vconcat(left_column_frames)
-            right_column = cv2.vconcat(right_column_frames) if right_column_frames else None
-
-            if right_column is not None:
-                if left_column.shape[0] > right_column.shape[0]:
-                    padding = left_column.shape[0] - right_column.shape[0]
-                    right_column = cv2.copyMakeBorder(right_column, 0, padding, 0, 0,
-                                                    cv2.BORDER_CONSTANT, value=[0, 0, 0])
-                elif left_column.shape[0] < right_column.shape[0]:
-                    padding = right_column.shape[0] - left_column.shape[0]
-                    left_column = cv2.copyMakeBorder(left_column, 0, padding, 0, 0,
-                                                   cv2.BORDER_CONSTANT, value=[0, 0, 0])
-
-                collage = cv2.hconcat([left_column, right_column])
-            else:
-                collage = left_column
-
-    # Add information about current settings
-    num_cols = 2 if num_frames >= 2 else 1
-    info_text = f"Frames: {len(frames)} | Layout: {num_frames}-frame"
-    cv2.putText(
-        collage, info_text, (10, collage.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX,
-        0.7, (255, 255, 255), 2, cv2.LINE_AA
-    )
-
-    return collage
-
-def resize_image_for_display(image, max_width=1280, max_height=720):
-    """
-    Resize the image to fit within max_width and max_height while maintaining aspect ratio.
-
-    Args:
-        image (numpy.ndarray): Image to resize.
-        max_width (int): Maximum width for display.
-        max_height (int): Maximum height for display.
-
-    Returns:
-        numpy.ndarray: Resized image.
-    """
-    height, width = image.shape[:2]
-    scaling_factor = min(max_width / width, max_height / height, 1)  # Ensure scaling factor <=1
-    if scaling_factor < 1:
-        new_size = (int(width * scaling_factor), int(height * scaling_factor))
-        resized_image = cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
-        return resized_image
-    return image
-
-def is_video_file(file_path, video_extensions):
-    """
-    Check if the file has a video extension.
-
-    Args:
-        file_path (Path): Path object of the file.
-        video_extensions (set): Set of supported video file extensions.
-
-    Returns:
-        bool: True if file has a supported video extension, False otherwise.
-    """
-    return file_path.suffix.lower() in video_extensions
-
-def get_all_video_files(directory, video_extensions):
-    """
-    Recursively get all video files in the directory.
-
-    Args:
-        directory (Path): Path object of the directory to search.
-        video_extensions (set): Set of supported video file extensions.
-
-    Returns:
-        list: List of Path objects for each video file found.
-    """
-    video_files = []
-    for root, dirs, files in os.walk(directory):
-        for file in files:
-            file_path = Path(root) / file
-            if is_video_file(file_path, video_extensions):
-                video_files.append(file_path)
-    return video_files
-
-def load_processed_videos(json_path):
-    """
-    Load the set of processed videos from a JSON file.
-
-    Args:
-        json_path (Path): Path to the JSON file.
-
-    Returns:
-        set: Set of processed video absolute paths.
-    """
-    if not json_path.exists():
-        return set()
-    try:
-        with open(json_path, 'r') as f:
-            data = json.load(f)
-            return set(data)
-    except Exception as e:
-        print(f"Error loading processed videos from {json_path}: {e}")
-        return set()
-
-def save_processed_video(json_path, video_path):
-    """
-    Save a processed video's absolute path to the JSON file.
-
-    Args:
-        json_path (Path): Path to the JSON file.
-        video_path (Path): Path object of the processed video.
-    """
-    processed = load_processed_videos(json_path)
-    processed.add(str(video_path.resolve()))
-    try:
-        with open(json_path, 'w') as f:
-            json.dump(list(processed), f, indent=4)
-    except Exception as e:
-        print(f"Error saving processed video to {json_path}: {e}")
-
-def find_existing_image(output_folder, image_name, image_extensions):
-    """
-    Search recursively in the output folder for an image with the specified name.
-
-    Args:
-        output_folder (Path): Path object of the output folder.
-        image_name (str): Name of the image file without extension.
-        image_extensions (set): Set of supported image file extensions.
-
-    Returns:
-        Path or None: Path to the existing image if found, None otherwise.
-    """
-    for root, dirs, files in os.walk(output_folder):
-        for file in files:
-            file_path = Path(root) / file
-            if file_path.suffix.lower() in image_extensions and file_path.stem == image_name:
-                return file_path
-    return None
-
 import os
 import shutil
-import sys
 from pathlib import Path
-import cv2
+from tkinter import Tk, messagebox, filedialog
+
+# from utils.file_utils import (
+#     is_video_file,
+#     get_all_video_files,
+#     find_existing_image,
+#     load_processed_videos,
+#     save_processed_video,
+#     copy_existing_image
+# )
 
 def process_video(video_path, input_folder, output_folder, json_path, video_index, total_videos):
     """
@@ -330,11 +66,7 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
     if existing_image_path is not None:
         if existing_image_path != collage_output_path:
             # Copy the image to the collage_output_path
-            try:
-                shutil.copy2(existing_image_path, collage_output_path)
-                print(f"Copied existing image from {existing_image_path} to {collage_output_path}")
-            except Exception as e:
-                print(f"Error copying existing image: {e}")
+            copy_existing_image(existing_image_path, collage_output_path)
         else:
             print(f"Image already exists at {collage_output_path}")
         # Mark the video as processed using its full path
@@ -360,7 +92,7 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
 
     # Initial settings
     min_frames = 2
-    max_frames = 8
+    max_frames = 9
     current_frames = 2
     swap_mode = False
     swap_first_frame = None
@@ -611,10 +343,10 @@ def process_video(video_path, input_folder, output_folder, json_path, video_inde
                         new_frame_num, new_frame = get_random_frame(cap, total_frames, frame_numbers)
                         frame_numbers.append(new_frame_num)
                         frames.append(new_frame)
+                        current_frames += 1
+                        print(f"Increased frame count to {current_frames}.")
                     except ValueError as ve:
                         print(f"Error: {ve}")
-                    current_frames += 1
-                    print(f"Increased frame count to {current_frames}.")
                     collage = create_collage(frames)
                     cv2.imwrite(collage_filename, collage)
                     display_collage = resize_image_for_display(collage, max_width=1280, max_height=720)
